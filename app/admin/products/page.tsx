@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 type Category = { _id: string; name?: string };
 type Subcategory = { _id: string; name?: string };
-type Size = { _id?: string; label?: string; value?: string };
+type Size = { _id?: string; name?: string; id?: string; productId?: string; label?: string; value?: string };
 type Product = {
   _id: string;
   name: string;
@@ -181,7 +181,7 @@ export default function ProductsPage() {
   async function openEdit(p: Product) {
     const catId = typeof p.category === 'object' && p.category ? (p.category as Category)._id : (p.category as string) || '';
     const subId = typeof p.subcategory === 'object' && p.subcategory ? (p.subcategory as Subcategory)._id : (p.subcategory as string) || '';
-    const sizesStr = p.sizes?.map((s) => (s as { size?: string }).size || (s as { label?: string }).label || '').filter(Boolean).join(', ') || '';
+    const sizesStr = p.sizes?.map((s) => (s as Size).name || (s as { size?: string }).size || (s as Size).label || '').filter(Boolean).join(', ') || '';
     const imagesStr = Array.isArray(p.images) ? p.images.join('\n') : '';
     setForm({
       name: p.name, description: p.description || '', price: String(p.price), stock: String(p.stock ?? 0), category: catId, subcategory: subId,
@@ -199,7 +199,15 @@ export default function ProductsPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const images = form.images ? form.images.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) : [];
-    const sizes = form.sizes ? form.sizes.split(',').map((s) => ({ size: s.trim() })).filter((x) => x.size) : [];
+    const sizeNames = form.sizes ? form.sizes.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const sizes = sizeNames.map((name, i) => {
+      const existing = modal && modal !== 'add' ? (modal as Product).sizes?.[i] : undefined;
+      return {
+        name,
+        id: (existing as Size)?.id ?? `size_${Date.now()}_${i}`,
+        productId: modal && modal !== 'add' ? (modal as Product)._id : null,
+      };
+    });
     const body: Record<string, unknown> = {
       name: form.name,
       price: parseFloat(form.price),
@@ -340,7 +348,7 @@ export default function ProductsPage() {
                 </p>
               )}
               {p.sizes?.length ? (
-                <p className="text-xs text-gray-500 mt-1">Sizes: {p.sizes.map((s) => s.label).join(', ')}</p>
+                <p className="text-xs text-gray-500 mt-1">Sizes: {p.sizes.map((s) => (s as Size).name || (s as Size).label).filter(Boolean).join(', ')}</p>
               ) : null}
               <div className="flex justify-between items-center mt-2">
                 <p className="text-lg font-bold text-primary-600">₹{p.price}</p>
