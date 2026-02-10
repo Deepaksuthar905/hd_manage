@@ -46,7 +46,7 @@ export default function UsersPage() {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
     try {
-      const res = await fetch(`${API_BASE}/api/users/${edit._id}`, {
+      const res = await fetch(`${API_BASE}/users/${edit._id}`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({ name, email, phone, role }),
