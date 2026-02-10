@@ -65,6 +65,11 @@ export default function ProductsPage() {
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [categoryName, setCategoryName] = useState('');
+  const [subcategoryName, setSubcategoryName] = useState('');
+  const [subcategoryCategoryId, setSubcategoryCategoryId] = useState('');
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [creatingSub, setCreatingSub] = useState(false);
 
   async function load() {
     try {
@@ -110,6 +115,58 @@ export default function ProductsPage() {
     loadSubcategories(filterCategory);
     setFilterSubcategory('');
   }, [filterCategory]);
+
+  async function createCategory(e: React.FormEvent) {
+    e.preventDefault();
+    if (!categoryName.trim()) return;
+    setCreatingCat(true);
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${API_BASE}/api/category/create`, { method: 'POST', headers, body: JSON.stringify({ name: categoryName.trim() }) });
+      const data = await res.json();
+      if (res.ok && data) {
+        setCategoryName('');
+        load();
+      } else {
+        alert(data?.message || data?.error || 'Failed to create category');
+      }
+    } catch {
+      alert('Failed to create category');
+    } finally {
+      setCreatingCat(false);
+    }
+  }
+
+  async function createSubcategory(e: React.FormEvent) {
+    e.preventDefault();
+    if (!subcategoryName.trim() || !subcategoryCategoryId) return;
+    setCreatingSub(true);
+    try {
+      const token = getToken();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`${API_BASE}/api/subcategory/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ name: subcategoryName.trim(), category: subcategoryCategoryId }),
+      });
+      const data = await res.json();
+      if (res.ok && data) {
+        setSubcategoryName('');
+        setSubcategoryCategoryId('');
+        load();
+        if (filterCategory) loadSubcategories(filterCategory);
+      } else {
+        alert(data?.message || data?.error || 'Failed to create subcategory');
+      }
+    } catch {
+      alert('Failed to create subcategory');
+    } finally {
+      setCreatingSub(false);
+    }
+  }
 
   function openAdd() {
     const catId = categories[0]?._id || '';
@@ -214,7 +271,7 @@ export default function ProductsPage() {
             <button onClick={openAdd} className="px-4 py-2 bg-primary-600 text-white rounded-lg">Add Product</button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-3 items-end">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Category</label>
             <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className="px-3 py-2 border rounded-lg min-w-[140px]">
@@ -233,8 +290,33 @@ export default function ProductsPage() {
               ))}
             </select>
           </div>
+          <form onSubmit={createCategory} className="flex gap-2 items-center">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Create Category</label>
+              <div className="flex gap-2">
+                <input value={categoryName} onChange={(e) => setCategoryName(e.target.value)} className="px-3 py-2 border rounded-lg min-w-[120px]" placeholder="Name" required />
+                <button type="submit" disabled={creatingCat} className="px-4 py-2 bg-primary-600 text-white rounded-lg disabled:opacity-50 text-sm">{creatingCat ? '...' : 'Create'}</button>
+              </div>
+            </div>
+          </form>
+          <form onSubmit={createSubcategory} className="flex gap-2 items-center flex-wrap">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Create Subcategory</label>
+              <div className="flex gap-2 flex-wrap">
+                <select value={subcategoryCategoryId} onChange={(e) => setSubcategoryCategoryId(e.target.value)} className="px-3 py-2 border rounded-lg min-w-[120px]" required>
+                  <option value="">Category</option>
+                  {categories.map((c) => (
+                    <option key={c._id} value={c._id}>{c.name}</option>
+                  ))}
+                </select>
+                <input value={subcategoryName} onChange={(e) => setSubcategoryName(e.target.value)} className="px-3 py-2 border rounded-lg min-w-[100px]" placeholder="Name" required />
+                <button type="submit" disabled={creatingSub || !subcategoryCategoryId} className="px-4 py-2 bg-primary-600 text-white rounded-lg disabled:opacity-50 text-sm">{creatingSub ? '...' : 'Create'}</button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((p) => (
           <div key={p._id} className="bg-white rounded-lg shadow overflow-hidden">

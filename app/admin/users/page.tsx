@@ -40,6 +40,8 @@ export default function UsersPage() {
     const form = e.target as HTMLFormElement;
     const name = (form.querySelector('[name="name"]') as HTMLInputElement)?.value;
     const email = (form.querySelector('[name="email"]') as HTMLInputElement)?.value;
+    const phone = (form.querySelector('[name="phone"]') as HTMLInputElement)?.value;
+    const role = (form.querySelector('[name="role"]') as HTMLSelectElement)?.value;
     const token = getToken();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -47,7 +49,7 @@ export default function UsersPage() {
       const res = await fetch(`${API_BASE}/api/users/${edit._id}`, {
         method: 'PUT',
         headers,
-        body: JSON.stringify({ name, email }),
+        body: JSON.stringify({ name, email, phone, role }),
       });
       if (res.ok) {
         setEdit(null);
@@ -137,6 +139,17 @@ export default function UsersPage() {
               <div>
                 <label className="block text-sm mb-1">Email</label>
                 <input name="email" type="email" defaultValue={edit.email} className="w-full px-3 py-2 border rounded" required />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Phone</label>
+                <input name="phone" type="tel" defaultValue={edit.phone ?? ''} className="w-full px-3 py-2 border rounded" placeholder="Phone number" />
+              </div>
+              <div>
+                <label className="block text-sm mb-1">Role</label>
+                <select name="role" defaultValue={edit.role ?? 'customer'} className="w-full px-3 py-2 border rounded">
+                  <option value="customer">customer</option>
+                  <option value="admin">admin</option>
+                </select>
               </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setEdit(null)} className="flex-1 py-2 border rounded">Cancel</button>
