@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 
 type ShippingAddress = { phone?: string; city?: string; state?: string; pincode?: string; address?: string };
-type OrderItem = { _id?: string; product?: { name?: string; price?: number }; quantity?: number; price?: number };
+type OrderItem = { _id?: string; product?: { name?: string; price?: number }; quantity?: number; price?: number; selectedSize?: string };
 type Order = {
   _id: string;
   total?: number;
@@ -171,10 +171,13 @@ export default function OrdersPage() {
             {detail.items?.length ? (
               <div className="mt-4">
                 <strong className="text-sm">Items:</strong>
-                <ul className="mt-2 space-y-1 text-sm">
+                <ul className="mt-2 space-y-2 text-sm">
                   {detail.items.map((it, i) => (
-                    <li key={it._id || i}>
-                      {it.product?.name || 'Product'} x {it.quantity} @ ₹{it.price} = ₹{((it.quantity || 0) * (it.price || 0)).toLocaleString()}
+                    <li key={it._id || i} className="border-b pb-2 last:border-0">
+                      <span className="font-medium">{it.product?.name || 'Product'}</span>
+                      {it.selectedSize && <span className="text-gray-600 ml-1">| Size: {it.selectedSize}</span>}
+                      <span className="text-gray-600 ml-1">| Qty: {it.quantity || 0} @ ₹{it.price}</span>
+                      <span className="font-medium ml-1">= ₹{((it.quantity || 0) * (it.price || 0)).toLocaleString()}</span>
                     </li>
                   ))}
                 </ul>
