@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
+const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com';
 
 export const api = axios.create({
   baseURL: BASE,
