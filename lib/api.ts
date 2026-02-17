@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com';
+const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com/api';
 
 export const api = axios.create({
   baseURL: BASE,

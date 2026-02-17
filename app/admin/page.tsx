@@ -5,7 +5,7 @@ import { FiUsers, FiShoppingCart, FiDollarSign, FiPackage } from 'react-icons/fi
 
 type Order = { _id: string; total?: number; status?: string; created_at?: string; user?: { name?: string } };
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api').replace(/\/api\/?$/, '');
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com/api').replace(/\/api\/?$/, '');
 
 function getToken() {
   if (typeof window === 'undefined') return '';

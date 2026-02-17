@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api').replace(/\/api\/?$/, '');
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com/api').replace(/\/api\/?$/, '');
 
 function getRoleFromToken(token: string): string | null {
   try {
