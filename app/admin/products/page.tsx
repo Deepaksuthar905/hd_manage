@@ -409,8 +409,8 @@ export default function ProductsPage() {
                 <label className="block text-sm mb-1">Images</label>
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e) => {
-                      const files = e.target.files;
+                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (ev) => {
+                      const files = ev.target.files;
                       if (!files?.length) return;
                       setUploading(true);
                       try {
@@ -423,8 +423,10 @@ export default function ProductsPage() {
                           const newUrls = data.urls.map((u: string) => (u.startsWith('http') ? u : base + u));
                           const existing = form.images ? form.images.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) : [];
                           setForm({ ...form, images: [...existing, ...newUrls].join('\n') });
+                        } else {
+                          alert(data?.details || data?.error || 'Upload failed');
                         }
-                      } catch { alert('Upload failed'); } finally { setUploading(false); e.target.value = ''; }
+                      } catch (err) { alert(err instanceof Error ? err.message : 'Upload failed'); } finally { setUploading(false); ev.target.value = ''; }
                     }} />
                     <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="px-4 py-2 border rounded bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-sm">
                       {uploading ? 'Uploading...' : '📁 Select Photos'}
