@@ -2,4 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-body { background: #f3f4f6; }
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: #f3f4f6;
+  overflow-x: hidden;
+}
+
+/* Prefer 16px inputs on iOS to avoid zoom-on-focus */
+@layer base {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  @media (min-width: 640px) {
+    input,
+    select,
+    textarea {
+      font-size: inherit;
+    }
+  }
+}

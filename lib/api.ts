@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || 'https://backend-jc8p.onrender.com/api';
+const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
 
 export const api = axios.create({
   baseURL: BASE,
@@ -26,6 +26,9 @@ export const endpoints = {
   deleteProduct: (id: string) => `/product/delete/${id}`,
   categories: '/categories',
   orders: '/orders/all',
+  todaySales: '/orders/reports/today',
+  restock: (id: string) => `/product/restock/${id}`,
+  inventory: '/products/inventory',
   order: (id: string) => `/orders/${id}`,
   orderStatus: (id: string) => `/orders/${id}/status`,
 };
