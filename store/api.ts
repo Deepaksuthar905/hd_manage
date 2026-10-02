@@ -45,7 +45,7 @@ export const adminApi = createApi({
   ],
   endpoints: (builder) => ({
     getMe: builder.query<{ user: { id: string; name: string; email: string; role: string } }, void>({
-      query: () => '/me',
+      query: () => '/api/me',
       providesTags: ['Me'],
       keepUnusedDataFor: 15 * 60,
     }),
@@ -58,7 +58,7 @@ export const adminApi = createApi({
 
     updateUser: builder.mutation<any, { id: string; body: Record<string, unknown> }>({
       query: ({ id, body }) => ({
-        url: `/users/${id}`,
+        url: `/api/users/${id}`,
         method: 'PUT',
         body,
       }),
@@ -264,6 +264,23 @@ export const adminApi = createApi({
       ],
     }),
 
+    updateCreditLedger: builder.mutation<
+      any,
+      { entryId: string; customerId?: string; body: Record<string, unknown> }
+    >({
+      query: ({ entryId, body }) => ({
+        url: `/api/credit/ledger/${entryId}`,
+        method: 'PUT',
+        body,
+      }),
+      invalidatesTags: (_r, _e, arg) => [
+        'CreditCustomers',
+        ...(arg.customerId ? [{ type: 'CreditCustomer' as const, id: arg.customerId }] : []),
+        'Products',
+        'Inventory',
+      ],
+    }),
+
     deleteCreditLedger: builder.mutation<any, { entryId: string; customerId?: string }>({
       query: ({ entryId }) => ({
         url: `/api/credit/ledger/${entryId}`,
@@ -383,6 +400,7 @@ export const {
   useAddCreditSaleMutation,
   useAddCreditPaymentMutation,
   useDeleteCreditLedgerMutation,
+  useUpdateCreditLedgerMutation,
   useGetVendorsQuery,
   useGetVendorQuery,
   useCreateVendorMutation,

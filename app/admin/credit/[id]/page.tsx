@@ -3,7 +3,16 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { FiArrowLeft, FiEdit2, FiImage, FiPhone, FiPlus, FiShare2, FiTrash2 } from 'react-icons/fi';
+import { FaWhatsapp } from 'react-icons/fa';
 import PhoneSheet from '@/components/PhoneSheet';
+import {
+  buildLedgerText,
+  buildShareFiles,
+  canShareFiles,
+  downloadFiles,
+  whatsappUrl,
+} from '@/lib/ledgerShare';
 import {
   API_ROOT,
   useGetCreditCustomerQuery,
@@ -12,6 +21,7 @@ import {
   useAddCreditPaymentMutation,
   useUpdateCreditCustomerMutation,
   useDeleteCreditLedgerMutation,
+  useUpdateCreditLedgerMutation,
 } from '@/store/api';
 
 type Product = {
@@ -88,6 +98,13 @@ async function uploadCreditImage(file: File): Promise<string> {
   return data.urls[0] as string;
 }
 
+function toLocalInput(d: string | Date) {
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  const local = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function fmtDate(d: string) {
   try {
     return new Date(d).toLocaleString('en-IN', {
@@ -115,9 +132,14 @@ export default function CreditCustomerDetailPage() {
   const [addCreditPayment, { isLoading: savingPayment }] = useAddCreditPaymentMutation();
   const [updateCreditCustomer, { isLoading: savingEdit }] = useUpdateCreditCustomerMutation();
   const [deleteCreditLedger] = useDeleteCreditLedgerMutation();
-  const saving = savingSale || savingPayment || savingEdit;
+  const [updateCreditLedger, { isLoading: savingEntry }] = useUpdateCreditLedgerMutation();
+  const saving = savingSale || savingPayment || savingEdit || savingEntry;
 
   const [modal, setModal] = useState<'sale' | 'payment' | 'edit' | null>(null);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [showShare, setShowShare] = useState(false);
+  const [includeParchi, setIncludeParchi] = useState(true);
+  const [sharing, setSharing] = useState(false);
 
   // Sale form
   const [lines, setLines] = useState<SaleLine[]>([emptyLine()]);
@@ -150,12 +172,46 @@ export default function CreditCustomerDetailPage() {
   }
 
   function openSale() {
+    setEditingEntryId(null);
     setLines([emptyLine()]);
     setSaleNote('');
-    setSaleDate(new Date().toISOString().slice(0, 16));
+    setSaleDate(toLocalInput(new Date()));
     setSimpleAmount('');
     setParchiImage('');
     setModal('sale');
+  }
+
+  function openEditEntry(row: LedgerEntry) {
+    setEditingEntryId(row._id);
+    if (row.type === 'sale') {
+      setLines(
+        row.items?.length
+          ? row.items.map((it) => ({
+              productId:
+                it.product && typeof it.product === 'object'
+                  ? it.product._id
+                  : typeof it.product === 'string'
+                    ? it.product
+                    : '',
+              name: it.name,
+              quantity: String(it.quantity),
+              rate: String(it.rate),
+              saleType: it.saleType === 'open' ? 'open' : 'packet',
+            }))
+          : [emptyLine()]
+      );
+      setSimpleAmount(row.items?.length ? '' : String(row.amount));
+      setSaleNote(row.note || '');
+      setSaleDate(toLocalInput(row.date));
+      setParchiImage(row.parchiImage || '');
+      setModal('sale');
+    } else {
+      setPayAmount(String(row.amount));
+      setPayMethod(row.paymentMethod === 'online' ? 'online' : 'cash');
+      setPayNote(row.note || '');
+      setPayDate(toLocalInput(row.date));
+      setModal('payment');
+    }
   }
 
   async function onParchiUpload(file?: File | null) {
@@ -172,10 +228,11 @@ export default function CreditCustomerDetailPage() {
   }
 
   function openPayment() {
+    setEditingEntryId(null);
     setPayAmount('');
     setPayMethod('cash');
     setPayNote('');
-    setPayDate(new Date().toISOString().slice(0, 16));
+    setPayDate(toLocalInput(new Date()));
     setModal('payment');
   }
 
@@ -220,8 +277,8 @@ export default function CreditCustomerDetailPage() {
     );
     const body: Record<string, unknown> = {
       note: saleNote,
-      date: saleDate || undefined,
-      parchiImage: parchiImage || undefined,
+      date: saleDate ? new Date(saleDate).toISOString() : undefined,
+      parchiImage: editingEntryId ? parchiImage : parchiImage || undefined,
     };
     if (valid.length) {
       body.items = valid.map((l) => ({
@@ -240,14 +297,19 @@ export default function CreditCustomerDetailPage() {
     }
 
     try {
-      await addCreditSale({ id, body }).unwrap();
+      if (editingEntryId) {
+        await updateCreditLedger({ entryId: editingEntryId, customerId: id, body }).unwrap();
+      } else {
+        await addCreditSale({ id, body }).unwrap();
+      }
       setModal(null);
+      setEditingEntryId(null);
     } catch (err: unknown) {
       const msg =
         err && typeof err === 'object' && 'data' in err
           ? (err as { data?: { message?: string } }).data?.message
           : undefined;
-      alert(msg || 'Failed to add sale');
+      alert(msg || (editingEntryId ? 'Failed to update entry' : 'Failed to add sale'));
     }
   }
 
@@ -258,23 +320,26 @@ export default function CreditCustomerDetailPage() {
       alert('Enter a valid amount');
       return;
     }
+    const body = {
+      amount: amt,
+      paymentMethod: payMethod,
+      note: payNote,
+      date: payDate ? new Date(payDate).toISOString() : undefined,
+    };
     try {
-      await addCreditPayment({
-        id,
-        body: {
-          amount: amt,
-          paymentMethod: payMethod,
-          note: payNote,
-          date: payDate || undefined,
-        },
-      }).unwrap();
+      if (editingEntryId) {
+        await updateCreditLedger({ entryId: editingEntryId, customerId: id, body }).unwrap();
+      } else {
+        await addCreditPayment({ id, body }).unwrap();
+      }
       setModal(null);
+      setEditingEntryId(null);
     } catch (err: unknown) {
       const msg =
         err && typeof err === 'object' && 'data' in err
           ? (err as { data?: { message?: string } }).data?.message
           : undefined;
-      alert(msg || 'Failed to record payment');
+      alert(msg || (editingEntryId ? 'Failed to update entry' : 'Failed to record payment'));
     }
   }
 
@@ -297,6 +362,42 @@ export default function CreditCustomerDetailPage() {
           ? (err as { data?: { message?: string } }).data?.message
           : undefined;
       alert(msg || 'Update failed');
+    }
+  }
+
+  function shareTextOnWhatsapp() {
+    if (!customer) return;
+    const text = buildLedgerText(customer, ledger);
+    window.open(whatsappUrl(customer.phone, text), '_blank');
+    setShowShare(false);
+  }
+
+  async function shareAsImages() {
+    if (!customer) return;
+    setSharing(true);
+    try {
+      const files = await buildShareFiles(customer, ledger, includeParchi);
+      const text = `${customer.name} — ledger statement. Current due: ₹${(
+        customer.balance || 0
+      ).toLocaleString('en-IN')}`;
+      if (canShareFiles(files)) {
+        try {
+          await navigator.share({ files, title: `${customer.name} ledger`, text });
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') return;
+          throw err;
+        }
+      } else {
+        downloadFiles(files);
+        alert(
+          'Sharing files is not supported in this browser. Images have been downloaded — attach them in WhatsApp.'
+        );
+      }
+      setShowShare(false);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Share failed');
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -334,88 +435,200 @@ export default function CreditCustomerDetailPage() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden">
-      <div className="mb-4">
-        <Link href="/admin/credit" className="text-sm text-primary-600 hover:underline">
-          ← All credit customers
+      <div className="mb-3">
+        <Link
+          href="/admin/credit"
+          className="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"
+        >
+          <FiArrowLeft size={15} />
+          All credit customers
         </Link>
       </div>
 
-      <div className="flex flex-col gap-4 mb-6">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold break-words">{customer.name}</h1>
-          <p className="text-sm text-gray-500 mt-1 break-words">
-            {customer.phone || 'No phone'}
-            {customer.address ? ` · ${customer.address}` : ''}
-          </p>
-          {customer.notes ? <p className="text-sm text-gray-400 mt-1">{customer.notes}</p> : null}
+      <div className="bg-white rounded-2xl shadow-sm border p-4 sm:p-5 mb-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold break-words">{customer.name}</h1>
+            {customer.phone ? (
+              <a
+                href={`tel:${customer.phone}`}
+                className="inline-flex items-center gap-1.5 text-sm text-gray-600 mt-1 hover:text-primary-600"
+              >
+                <FiPhone size={14} />
+                {customer.phone}
+              </a>
+            ) : (
+              <p className="text-sm text-gray-400 mt-1">No phone</p>
+            )}
+            {customer.address ? (
+              <p className="text-sm text-gray-500 mt-0.5 break-words">{customer.address}</p>
+            ) : null}
+            {customer.notes ? (
+              <p className="text-xs text-gray-400 mt-1 break-words">{customer.notes}</p>
+            ) : null}
+          </div>
+          <div className="shrink-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowShare(true)}
+              aria-label="Share ledger"
+              className="inline-flex items-center gap-1.5 px-3 py-2 border border-green-200 bg-green-50 rounded-xl text-sm text-green-700 hover:bg-green-100 active:scale-95 transition"
+            >
+              <FiShare2 size={14} />
+              <span className="hidden sm:inline">Share</span>
+            </button>
+            <button
+              type="button"
+              onClick={openEdit}
+              className="inline-flex items-center gap-1.5 px-3 py-2 border rounded-xl text-sm text-gray-700 hover:bg-gray-50 active:scale-95 transition"
+            >
+              <FiEdit2 size={14} />
+              Edit
+            </button>
+          </div>
         </div>
 
-        <div className="hidden md:flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={openEdit}
-            className="px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            onClick={openSale}
-            className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm"
-          >
-            + Credit sale
-          </button>
-          <button
-            type="button"
-            onClick={openPayment}
-            className="px-3 py-2 bg-green-600 text-white rounded-lg text-sm"
-          >
-            + Payment
-          </button>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2 md:hidden">
-          <button
-            type="button"
-            onClick={openSale}
-            className="py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium"
-          >
-            + Credit sale
-          </button>
-          <button
-            type="button"
-            onClick={openPayment}
-            className="py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium"
-          >
-            + Payment
-          </button>
-          <button
-            type="button"
-            onClick={openEdit}
-            className="py-2.5 border rounded-lg text-sm font-medium"
-          >
-            Edit
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow p-4 sm:p-5 mb-6 max-w-sm">
-        <p className="text-xs text-gray-500 uppercase tracking-wide">Current Due Balance</p>
-        <p
-          className={`text-2xl sm:text-3xl font-bold mt-1 break-all ${
-            customer.balance > 0 ? 'text-amber-700' : 'text-green-700'
+        <div
+          className={`mt-4 rounded-xl px-4 py-3 ${
+            customer.balance > 0 ? 'bg-amber-50' : 'bg-green-50'
           }`}
         >
-          ₹{(customer.balance || 0).toLocaleString('en-IN')}
-        </p>
+          <p className="text-[11px] text-gray-500 uppercase tracking-wide">Current due balance</p>
+          <p
+            className={`text-2xl sm:text-3xl font-bold mt-0.5 break-all ${
+              customer.balance > 0 ? 'text-amber-700' : 'text-green-700'
+            }`}
+          >
+            ₹{(customer.balance || 0).toLocaleString('en-IN')}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mt-4 md:flex md:justify-end">
+          <button
+            type="button"
+            onClick={openSale}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+          >
+            <FiPlus size={16} />
+            Credit sale
+          </button>
+          <button
+            type="button"
+            onClick={openPayment}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+          >
+            <FiPlus size={16} />
+            Payment
+          </button>
+        </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="px-4 py-3 border-b flex items-center justify-between gap-2">
+      <div className="flex items-center justify-between mb-2 md:hidden">
+        <h2 className="font-semibold">Ledger</h2>
+        <p className="text-xs text-gray-400">{ledger.length} entries</p>
+      </div>
+
+      {/* Mobile ledger cards */}
+      <div className="md:hidden space-y-2.5">
+        {ledger.length === 0 && (
+          <div className="bg-white rounded-xl border py-10 text-center text-gray-500 text-sm px-4">
+            No entries yet. Add a credit sale or payment.
+          </div>
+        )}
+        {ledger.map((row) => (
+          <div key={row._id} className="bg-white rounded-xl border shadow-sm p-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                {row.type === 'sale' ? (
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800">
+                    Credit sale
+                  </span>
+                ) : (
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-green-100 text-green-800">
+                    Payment · {row.paymentMethod === 'online' ? 'Online' : 'Cash'}
+                  </span>
+                )}
+                <p className="text-xs text-gray-500 mt-1">{fmtDate(row.date)}</p>
+              </div>
+              <p
+                className={`text-base font-bold whitespace-nowrap ${
+                  row.type === 'sale' ? 'text-amber-700' : 'text-green-700'
+                }`}
+              >
+                {row.type === 'sale' ? '+' : '−'}₹{row.amount.toLocaleString('en-IN')}
+              </p>
+            </div>
+
+            {(row.items?.length > 0 || row.note || row.parchiImage) && (
+              <div className="flex items-start gap-3 mt-2.5">
+                <div className="flex-1 min-w-0 text-sm text-gray-700">
+                  {row.items?.length > 0 && (
+                    <ul className="space-y-0.5">
+                      {row.items.map((it, i) => (
+                        <li key={i} className="break-words">
+                          {it.name} × {it.quantity} @ ₹{it.rate}
+                          {it.saleType ? (
+                            <span className="text-gray-400 text-xs"> ({it.saleType})</span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {row.note ? (
+                    <p className="text-gray-500 text-xs mt-1 break-words">{row.note}</p>
+                  ) : null}
+                </div>
+                {row.parchiImage ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreview(row.parchiImage!)}
+                    className="shrink-0"
+                  >
+                    <img
+                      src={row.parchiImage}
+                      alt="Parchi"
+                      className="h-12 w-12 object-cover rounded-lg border"
+                    />
+                  </button>
+                ) : null}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between mt-3 pt-2.5 border-t text-sm">
+              <p className="text-gray-500">
+                Balance:{' '}
+                <span className="font-semibold text-gray-800">
+                  ₹{row.balanceAfter.toLocaleString('en-IN')}
+                </span>
+              </p>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => openEditEntry(row)}
+                  className="inline-flex items-center gap-1 text-primary-600 text-xs px-2 py-1 rounded-lg hover:bg-primary-50"
+                >
+                  <FiEdit2 size={13} />
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteEntry(row._id)}
+                  className="inline-flex items-center gap-1 text-red-500 text-xs px-2 py-1 rounded-lg hover:bg-red-50"
+                >
+                  <FiTrash2 size={13} />
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
+        <div className="px-4 py-3 border-b">
           <h2 className="font-semibold">Ledger</h2>
-          <p className="text-xs text-gray-400 md:hidden">Swipe for columns</p>
         </div>
-        <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-gray-50">
               <tr>
@@ -489,7 +702,14 @@ export default function CreditCustomerDetailPage() {
                     {row.type === 'sale' ? '+' : '−'}₹{row.amount.toLocaleString('en-IN')}
                   </td>
                   <td className="py-3 px-4 text-right">₹{row.balanceAfter.toLocaleString('en-IN')}</td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => openEditEntry(row)}
+                      className="text-primary-600 text-xs hover:underline mr-3"
+                    >
+                      Edit
+                    </button>
                     <button
                       type="button"
                       onClick={() => deleteEntry(row._id)}
@@ -507,7 +727,7 @@ export default function CreditCustomerDetailPage() {
 
       {modal === 'sale' && (
         <PhoneSheet
-          title="Credit sale"
+          title={editingEntryId ? 'Edit credit sale' : 'Credit sale'}
           wide
           onClose={() => setModal(null)}
           footer={
@@ -527,7 +747,7 @@ export default function CreditCustomerDetailPage() {
                   disabled={saving || uploadingParchi}
                   className="py-3 bg-amber-600 text-white rounded-xl text-base disabled:opacity-50"
                 >
-                  {saving ? 'Saving...' : 'Save'}
+                  {saving ? 'Saving...' : editingEntryId ? 'Update' : 'Save'}
                 </button>
               </div>
             </div>
@@ -714,7 +934,7 @@ export default function CreditCustomerDetailPage() {
 
       {modal === 'payment' && (
         <PhoneSheet
-          title="Payment Received"
+          title={editingEntryId ? 'Edit payment' : 'Payment Received'}
           onClose={() => setModal(null)}
           footer={
             <div className="grid grid-cols-2 gap-2">
@@ -731,7 +951,7 @@ export default function CreditCustomerDetailPage() {
                 disabled={saving}
                 className="py-3 bg-green-600 text-white rounded-xl text-base disabled:opacity-50"
               >
-                {saving ? 'Saving...' : 'Save'}
+                {saving ? 'Saving...' : editingEntryId ? 'Update' : 'Save'}
               </button>
             </div>
           }
@@ -859,6 +1079,65 @@ export default function CreditCustomerDetailPage() {
               />
             </div>
           </form>
+        </PhoneSheet>
+      )}
+
+      {showShare && (
+        <PhoneSheet title="Share ledger" onClose={() => !sharing && setShowShare(false)}>
+          <div className="space-y-3">
+            <p className="text-sm text-gray-500">
+              Send {customer.name}&apos;s full ledger ({ledger.length} entries) on WhatsApp.
+            </p>
+
+            <button
+              type="button"
+              onClick={shareTextOnWhatsapp}
+              disabled={sharing}
+              className="w-full flex items-start gap-3 p-4 border rounded-xl text-left hover:bg-green-50 active:scale-[0.99] transition disabled:opacity-50"
+            >
+              <span className="shrink-0 w-10 h-10 rounded-full bg-green-500 text-white flex items-center justify-center">
+                <FaWhatsapp size={22} />
+              </span>
+              <span>
+                <span className="block font-semibold">WhatsApp message</span>
+                <span className="block text-xs text-gray-500 mt-0.5">
+                  Opens {customer.phone ? `chat with ${customer.phone}` : 'WhatsApp'} with the full
+                  ledger as text. Parchi photos are included as links.
+                </span>
+              </span>
+            </button>
+
+            <div className="border rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <span className="shrink-0 w-10 h-10 rounded-full bg-primary-600 text-white flex items-center justify-center">
+                  <FiImage size={20} />
+                </span>
+                <div className="min-w-0">
+                  <p className="font-semibold">Share as image</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Ledger statement image + parchi photos. Choose WhatsApp from the share menu.
+                  </p>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 mt-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={includeParchi}
+                  onChange={(e) => setIncludeParchi(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                Include parchi photos ({ledger.filter((e) => e.parchiImage).length})
+              </label>
+              <button
+                type="button"
+                onClick={shareAsImages}
+                disabled={sharing}
+                className="w-full mt-3 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium disabled:opacity-60"
+              >
+                {sharing ? 'Preparing images…' : 'Share images'}
+              </button>
+            </div>
+          </div>
         </PhoneSheet>
       )}
 

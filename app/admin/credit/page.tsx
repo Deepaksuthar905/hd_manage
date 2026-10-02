@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { FiSearch, FiShoppingCart, FiUserPlus } from 'react-icons/fi';
 import PhoneSheet from '@/components/PhoneSheet';
 import {
   useGetCreditCustomersQuery,
@@ -86,55 +87,64 @@ export default function CreditCustomersPage() {
 
   return (
     <div className="w-full max-w-full overflow-x-hidden">
-      <div className="flex flex-col gap-4 mb-6">
+      <div className="flex flex-col gap-3 mb-5 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold">Credit</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-gray-500 mt-0.5">
             Track balances, sales on credit, and payments
           </p>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <input
-            type="text"
-            placeholder="Search name / phone..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && doSearch()}
-            className="px-3 py-2.5 border rounded-lg w-full sm:w-56 text-base"
-          />
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:w-auto">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              doSearch();
+            }}
+            className="flex items-center w-full md:w-72 bg-white border rounded-xl shadow-sm focus-within:ring-2 focus-within:ring-primary-500 focus-within:border-primary-500 overflow-hidden"
+          >
+            <FiSearch className="ml-3 shrink-0 text-gray-400" size={18} />
+            <input
+              type="search"
+              placeholder="Search name / phone..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="flex-1 min-w-0 px-2 py-2.5 text-base outline-none bg-transparent"
+            />
             <button
-              type="button"
-              onClick={doSearch}
-              className="px-3 py-2.5 border rounded-lg text-sm hover:bg-gray-50"
+              type="submit"
+              className="m-1 px-3 py-1.5 rounded-lg bg-gray-900 text-white text-sm font-medium active:scale-95 transition"
             >
               Search
             </button>
+          </form>
+          <div className="grid grid-cols-2 gap-2 md:flex">
             <Link
               href="/admin/sales"
-              className="px-3 py-2.5 bg-green-600 text-white rounded-lg text-sm text-center"
+              className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
             >
-              + Sale
+              <FiShoppingCart size={16} />
+              New Sale
             </Link>
+            <button
+              type="button"
+              onClick={() => setShowAdd(true)}
+              className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+            >
+              <FiUserPlus size={16} />
+              Add Customer
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowAdd(true)}
-            className="px-3 py-2.5 bg-primary-600 text-white rounded-lg text-sm w-full sm:w-auto"
-          >
-            + Add Customer
-          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Customers</p>
-          <p className="text-2xl font-bold mt-1">{list.length}</p>
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <div className="bg-white rounded-xl shadow-sm border p-3 sm:p-4">
+          <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">Customers</p>
+          <p className="text-xl sm:text-2xl font-bold mt-1">{list.length}</p>
         </div>
-        <div className="bg-white rounded-lg shadow p-4">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Total Due</p>
-          <p className="text-2xl font-bold mt-1 text-amber-700">₹{totalDue.toLocaleString('en-IN')}</p>
+        <div className="bg-white rounded-xl shadow-sm border p-3 sm:p-4">
+          <p className="text-[11px] sm:text-xs text-gray-500 uppercase tracking-wide">Total Due</p>
+          <p className="text-xl sm:text-2xl font-bold mt-1 text-amber-700 truncate">₹{totalDue.toLocaleString('en-IN')}</p>
         </div>
       </div>
 

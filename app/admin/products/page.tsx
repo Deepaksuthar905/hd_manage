@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import Link from 'next/link';
 import PhoneSheet from '@/components/PhoneSheet';
+import ProductImageCropper from '@/components/ProductImageCropper';
 import {
   API_ROOT,
   useGetProductsQuery,
@@ -100,6 +101,9 @@ export default function ProductsPage() {
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Queue of object URLs waiting for crop */
+  const [cropQueue, setCropQueue] = useState<string[]>([]);
+  const [cropIndex, setCropIndex] = useState(0);
   const [categoryName, setCategoryName] = useState('');
   const [subcategoryName, setSubcategoryName] = useState('');
   const [subcategoryCategoryId, setSubcategoryCategoryId] = useState('');
@@ -111,6 +115,83 @@ export default function ProductsPage() {
   const [createProductMut] = useCreateProductMutation();
   const [updateProductMut] = useUpdateProductMutation();
   const [deleteProductMut] = useDeleteProductMutation();
+
+  function revokeQueue(urls: string[]) {
+    urls.forEach((u) => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {
+        /* ignore */
+      }
+    });
+  }
+
+  function advanceCropQueue(fromUrls: string[], fromIndex: number) {
+    const next = fromIndex + 1;
+    if (next >= fromUrls.length) {
+      revokeQueue(fromUrls);
+      setCropQueue([]);
+      setCropIndex(0);
+      return;
+    }
+    setCropIndex(next);
+  }
+
+  function onPickPhotos(files: FileList | null) {
+    if (!files?.length) return;
+    const urls: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      if (!f.type.startsWith('image/')) continue;
+      urls.push(URL.createObjectURL(f));
+    }
+    if (!urls.length) return;
+    setCropQueue(urls);
+    setCropIndex(0);
+  }
+
+  async function uploadCroppedFile(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('files', file);
+      const token = getToken();
+      const uploadHeaders: Record<string, string> = {};
+      if (token) uploadHeaders.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${API_ROOT}/api/upload?folder=products`, {
+        method: 'POST',
+        headers: uploadHeaders,
+        body: fd,
+      });
+      const data = await res.json();
+      if (data?.urls?.length) {
+        const newUrls = data.urls.map((u: string) =>
+          u.startsWith('http') ? u : `${API_ROOT}${u.startsWith('/') ? '' : '/'}${u}`
+        );
+        setForm((prev) => {
+          const existing = prev.images
+            ? prev.images.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+            : [];
+          return { ...prev, images: [...existing, ...newUrls].join('\n') };
+        });
+      } else {
+        alert(data?.details || data?.error || 'Upload failed');
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function onCropSave(file: File) {
+    await uploadCroppedFile(file);
+    advanceCropQueue(cropQueue, cropIndex);
+  }
+
+  function onCropSkip() {
+    advanceCropQueue(cropQueue, cropIndex);
+  }
 
   const subQueryId = modal ? form.category : filterCategory;
   const { data: subcategories = [] } = useGetSubcategoriesQuery(subQueryId, {
@@ -512,32 +593,54 @@ export default function ProductsPage() {
               <label className="block text-sm mb-1">Images</label>
               <div className="space-y-2">
                 <div className="flex gap-2">
-                  <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={async (ev) => {
-                    const files = ev.target.files;
-                    if (!files?.length) return;
-                    setUploading(true);
-                    try {
-                      const fd = new FormData();
-                      for (let i = 0; i < files.length; i++) fd.append('files', files[i]);
-                      const token = getToken();
-                      const uploadHeaders: Record<string, string> = {};
-                      if (token) uploadHeaders['Authorization'] = `Bearer ${token}`;
-                      const res = await fetch(`${API_ROOT}/api/upload?folder=products`, { method: 'POST', headers: uploadHeaders, body: fd });
-                      const data = await res.json();
-                      if (data?.urls?.length) {
-                        const newUrls = data.urls.map((u: string) => (u.startsWith('http') ? u : `${API_ROOT}${u.startsWith('/') ? '' : '/'}${u}`));
-                        const existing = form.images ? form.images.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) : [];
-                        setForm({ ...form, images: [...existing, ...newUrls].join('\n') });
-                      } else {
-                        alert(data?.details || data?.error || 'Upload failed');
-                      }
-                    } catch (err) { alert(err instanceof Error ? err.message : 'Upload failed'); } finally { setUploading(false); ev.target.value = ''; }
-                  }} />
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="w-full sm:w-auto px-4 py-3 border rounded-xl bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-sm">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(ev) => {
+                      onPickPhotos(ev.target.files);
+                      ev.target.value = '';
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading || cropQueue.length > 0}
+                    className="w-full sm:w-auto px-4 py-3 border rounded-xl bg-gray-50 hover:bg-gray-100 disabled:opacity-50 text-sm"
+                  >
                     {uploading ? 'Uploading...' : 'Select Photos'}
                   </button>
                 </div>
-                <textarea value={form.images} onChange={(e) => setForm({ ...form, images: e.target.value })} className="w-full px-3 py-3 border rounded-xl text-base" rows={2} placeholder="Or paste URLs (one per line)" />
+                <p className="text-xs text-gray-500">
+                  Photo select → crop + white background → then upload to Cloudinary
+                </p>
+                <textarea
+                  value={form.images}
+                  onChange={(e) => setForm({ ...form, images: e.target.value })}
+                  className="w-full px-3 py-3 border rounded-xl text-base"
+                  rows={2}
+                  placeholder="Or paste URLs (one per line)"
+                />
+                {form.images.trim() ? (
+                  <div className="flex flex-wrap gap-2">
+                    {form.images
+                      .split(/[\n,]/)
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                      .map((url) => (
+                        <div key={url} className="relative">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={getImageUrl(url)}
+                            alt=""
+                            className="h-16 w-16 object-cover rounded-lg border bg-white"
+                          />
+                        </div>
+                      ))}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div>
@@ -575,6 +678,17 @@ export default function ProductsPage() {
           </form>
         </PhoneSheet>
       )}
+
+      {cropQueue[cropIndex] ? (
+        <ProductImageCropper
+          key={cropQueue[cropIndex]}
+          src={cropQueue[cropIndex]}
+          index={cropIndex + 1}
+          total={cropQueue.length}
+          onCancel={onCropSkip}
+          onSave={onCropSave}
+        />
+      ) : null}
     </div>
   );
 }
