@@ -12,6 +12,35 @@ type Props = {
 
 const OUTPUT_SIZE = 1000;
 
+// Loaded from a CDN at runtime: bundling onnxruntime-web breaks `next build`
+// (its minified bundle uses import.meta, which the Next minifier rejects).
+const BG_REMOVAL_CDNS = [
+  'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm',
+  'https://esm.sh/@imgly/background-removal@1.7.0',
+];
+
+let bgRemovalModule: Promise<Record<string, unknown>> | null = null;
+
+function loadBackgroundRemoval() {
+  if (!bgRemovalModule) {
+    bgRemovalModule = (async () => {
+      let lastError: unknown;
+      for (const url of BG_REMOVAL_CDNS) {
+        try {
+          return (await import(/* webpackIgnore: true */ url)) as Record<string, unknown>;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      bgRemovalModule = null;
+      throw lastError instanceof Error
+        ? lastError
+        : new Error('Background removal library failed to load');
+    })();
+  }
+  return bgRemovalModule;
+}
+
 /**
  * AI background removal → product on pure white → zoom/pan crop → JPEG upload.
  */
@@ -47,8 +76,7 @@ export default function ProductImageCropper({
       setCutoutUrl(null);
       setProgress('Loading AI model (first time may take a minute)…');
       try {
-        // Next/webpack interop: named export OR default function OR default.module
-        const mod: Record<string, unknown> = await import('@imgly/background-removal');
+        const mod = await loadBackgroundRemoval();
         const maybeDefault = mod.default as unknown;
         const removeBackground = ([
           mod.removeBackground,
