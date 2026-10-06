@@ -360,6 +360,18 @@ export const adminApi = createApi({
       invalidatesTags: (_r, _e, arg) => ['Vendors', { type: 'Vendor', id: arg.id }],
     }),
 
+    addVendorBill: builder.mutation<
+      any,
+      { entryId: string; vendorId: string; body: Record<string, unknown> }
+    >({
+      query: ({ entryId, body }) => ({
+        url: `/api/vendors/ledger/${entryId}/bill`,
+        method: 'PUT',
+        body,
+      }),
+      invalidatesTags: (_r, _e, arg) => ['Vendors', { type: 'Vendor', id: arg.vendorId }],
+    }),
+
     deleteVendorLedger: builder.mutation<any, { entryId: string; vendorId?: string }>({
       query: ({ entryId }) => ({
         url: `/api/vendors/ledger/${entryId}`,
@@ -409,6 +421,7 @@ export const {
   useAddVendorPurchaseMutation,
   useAddVendorPaymentMutation,
   useAddVendorAdvanceMutation,
+  useAddVendorBillMutation,
   useDeleteVendorLedgerMutation,
   useLazyGetTodaySalesQuery,
   useLazyGetCreditCustomersQuery,

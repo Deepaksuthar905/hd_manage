@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { FiArrowLeft, FiClock, FiEdit2, FiFileText, FiPhone, FiPlus, FiTrash2 } from 'react-icons/fi';
 import PhoneSheet from '@/components/PhoneSheet';
 import {
   API_ROOT,
@@ -11,6 +12,7 @@ import {
   useAddVendorPurchaseMutation,
   useAddVendorPaymentMutation,
   useAddVendorAdvanceMutation,
+  useAddVendorBillMutation,
   useDeleteVendorLedgerMutation,
 } from '@/store/api';
 
@@ -27,9 +29,15 @@ type LedgerEntry = {
   goodsDate?: string;
   parchiImage?: string;
   billImage?: string;
+  billStatus?: 'pending' | 'received';
+  billDate?: string;
   balanceAfter: number;
   advanceAfter?: number;
 };
+
+function isBillPending(row: LedgerEntry) {
+  return row.type === 'purchase' && row.billStatus === 'pending';
+}
 
 type Line = { name: string; quantity: string; rate: string };
 
@@ -46,6 +54,13 @@ function fmtDate(d?: string) {
   } catch {
     return d;
   }
+}
+
+function toLocalInput(d: string | Date) {
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  const local = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 
 function fmtMoney(n: number) {
@@ -65,6 +80,9 @@ function methodLabel(m?: string) {
 }
 
 function typeBadge(row: LedgerEntry) {
+  if (isBillPending(row)) {
+    return { text: 'Goods · Bill pending', cls: 'bg-orange-100 text-orange-800' };
+  }
   if (row.type === 'purchase') {
     return { text: `Goods · ${methodLabel(row.paymentMethod || 'udhar')}`, cls: 'bg-amber-100 text-amber-800' };
   }
@@ -112,9 +130,14 @@ export default function VendorDetailPage() {
   const [addPurchase] = useAddVendorPurchaseMutation();
   const [addPayment] = useAddVendorPaymentMutation();
   const [addAdvance] = useAddVendorAdvanceMutation();
+  const [addBill] = useAddVendorBillMutation();
   const [deleteLedger] = useDeleteVendorLedgerMutation();
 
+  const pendingBills = ledger.filter(isBillPending);
+
   const [modal, setModal] = useState<'purchase' | 'payment' | 'advance' | 'edit' | null>(null);
+  const [receiptOnly, setReceiptOnly] = useState(false);
+  const [billEntry, setBillEntry] = useState<LedgerEntry | null>(null);
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
 
@@ -143,13 +166,34 @@ export default function VendorDetailPage() {
     setBillImage('');
   }
 
+  function openBill(row: LedgerEntry) {
+    setBillEntry(row);
+    setReceiptOnly(false);
+    setLines(
+      row.items?.length
+        ? row.items.map((it) => ({ name: it.name, quantity: String(it.quantity), rate: '' }))
+        : [emptyLine()]
+    );
+    setSimpleAmount('');
+    setPaidNow('');
+    setPayMethod('udhar');
+    setUseAdvance(false);
+    setEntryDate(toLocalInput(new Date()));
+    setNote(row.note || '');
+    setParchiImage(row.parchiImage || '');
+    setBillImage('');
+    setModal('purchase');
+  }
+
   function openPurchase() {
+    setBillEntry(null);
+    setReceiptOnly(false);
     setLines([emptyLine()]);
     setSimpleAmount('');
     setPaidNow('');
     setPayMethod('udhar');
     setUseAdvance(false);
-    const now = new Date().toISOString().slice(0, 16);
+    const now = toLocalInput(new Date());
     setGoodsDate(now);
     setEntryDate(now);
     setNote('');
@@ -160,7 +204,7 @@ export default function VendorDetailPage() {
   function openPayment() {
     setAmount('');
     setMethod('cash');
-    setEntryDate(new Date().toISOString().slice(0, 16));
+    setEntryDate(toLocalInput(new Date()));
     setNote('');
     resetPhotos();
     setModal('payment');
@@ -169,7 +213,7 @@ export default function VendorDetailPage() {
   function openAdvance() {
     setAmount('');
     setMethod('cash');
-    setEntryDate(new Date().toISOString().slice(0, 16));
+    setEntryDate(toLocalInput(new Date()));
     setNote('');
     resetPhotos();
     setModal('advance');
@@ -210,6 +254,79 @@ export default function VendorDetailPage() {
   async function submitPurchase(e: React.FormEvent) {
     e.preventDefault();
     const valid = lines.filter((l) => l.name.trim() && (parseFloat(l.quantity) || 0) > 0);
+
+    if (receiptOnly && !billEntry) {
+      if (!valid.length && !parchiImage) {
+        alert('Add items or upload the receipt photo');
+        return;
+      }
+      setSaving(true);
+      try {
+        await addPurchase({
+          id,
+          body: {
+            billPending: true,
+            items: valid.map((l) => ({ name: l.name.trim(), quantity: parseFloat(l.quantity) || 1 })),
+            note,
+            date: entryDate || undefined,
+            goodsDate: goodsDate || undefined,
+            parchiImage,
+          },
+        }).unwrap();
+        setModal(null);
+      } catch (err: any) {
+        alert(err?.data?.message || 'Failed');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    const paid =
+      payMethod === 'udhar'
+        ? 0
+        : parseFloat(paidNow) || (payMethod === 'cash' || payMethod === 'online' ? purchaseTotal : 0);
+
+    if (billEntry) {
+      const priced = valid.filter((l) => (parseFloat(l.rate) || 0) > 0);
+      const linesTotal = priced.reduce(
+        (s, l) => s + (parseFloat(l.quantity) || 0) * (parseFloat(l.rate) || 0),
+        0
+      );
+      const billBody: Record<string, unknown> = {
+        paymentMethod: payMethod,
+        paidAmount: paid,
+        useAdvance,
+        billImage,
+        billDate: entryDate || undefined,
+        note,
+      };
+      if (linesTotal > 0) {
+        billBody.items = valid.map((l) => ({
+          name: l.name.trim(),
+          quantity: parseFloat(l.quantity) || 1,
+          rate: parseFloat(l.rate) || 0,
+          amount: (parseFloat(l.quantity) || 1) * (parseFloat(l.rate) || 0),
+        }));
+      } else if (purchaseTotal > 0) {
+        billBody.amount = purchaseTotal;
+      } else {
+        alert('Enter item rates or the bill total');
+        return;
+      }
+      setSaving(true);
+      try {
+        await addBill({ entryId: billEntry._id, vendorId: id, body: billBody }).unwrap();
+        setModal(null);
+        setBillEntry(null);
+      } catch (err: any) {
+        alert(err?.data?.message || 'Failed to add bill');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     const body: Record<string, unknown> = {
       note,
       date: entryDate || undefined,
@@ -383,72 +500,259 @@ export default function VendorDetailPage() {
   }
 
   return (
-    <div className="w-full max-w-full pb-24 md:pb-0">
+    <div className="w-full max-w-full overflow-x-hidden">
       <div className="mb-3">
-        <Link href="/admin/vendors" className="text-sm text-primary-600 hover:underline">
-          ← All vendors
+        <Link
+          href="/admin/vendors"
+          className="inline-flex items-center gap-1 text-sm text-primary-600 hover:underline"
+        >
+          <FiArrowLeft size={15} />
+          All vendors
         </Link>
       </div>
 
-      <div className="flex flex-col gap-4 mb-5">
-        <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold break-words">{vendor.name}</h1>
-          <p className="text-sm text-gray-500 mt-1 break-words">
-            {vendor.phone || 'No phone'}
-            {vendor.address ? ` · ${vendor.address}` : ''}
-          </p>
-        </div>
-
-        <div className="hidden md:flex flex-wrap gap-2">
-          <button type="button" onClick={openEdit} className="px-3 py-2 border rounded-lg text-sm hover:bg-gray-50">
+      <div className="bg-white rounded-2xl shadow-sm border p-4 sm:p-5 mb-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold break-words">{vendor.name}</h1>
+            {vendor.phone ? (
+              <a
+                href={`tel:${vendor.phone}`}
+                className="inline-flex items-center gap-1.5 text-sm text-gray-600 mt-1 hover:text-primary-600"
+              >
+                <FiPhone size={14} />
+                {vendor.phone}
+              </a>
+            ) : (
+              <p className="text-sm text-gray-400 mt-1">No phone</p>
+            )}
+            {vendor.address ? (
+              <p className="text-sm text-gray-500 mt-0.5 break-words">{vendor.address}</p>
+            ) : null}
+            {vendor.notes ? (
+              <p className="text-xs text-gray-400 mt-1 break-words">{vendor.notes}</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={openEdit}
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 border rounded-xl text-sm text-gray-700 hover:bg-gray-50 active:scale-95 transition"
+          >
+            <FiEdit2 size={14} />
             Edit
           </button>
-          <button type="button" onClick={openPurchase} className="px-3 py-2 bg-amber-600 text-white rounded-lg text-sm">
-            + Goods
-          </button>
-          <button type="button" onClick={openPayment} className="px-3 py-2 bg-green-600 text-white rounded-lg text-sm">
-            + Payment
-          </button>
-          <button type="button" onClick={openAdvance} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm">
-            + Advance
-          </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 md:hidden">
-          <button type="button" onClick={openPurchase} className="py-2.5 bg-amber-600 text-white rounded-lg text-sm font-medium">
-            + Goods
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <div className={`rounded-xl px-4 py-3 ${vendor.balance > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
+            <p className="text-[11px] text-gray-500 uppercase tracking-wide">Due to vendor</p>
+            <p
+              className={`text-xl sm:text-3xl font-bold mt-0.5 break-all ${
+                vendor.balance > 0 ? 'text-amber-700' : 'text-green-700'
+              }`}
+            >
+              {fmtMoney(vendor.balance || 0)}
+            </p>
+          </div>
+          <div className={`rounded-xl px-4 py-3 ${vendor.advance > 0 ? 'bg-blue-50' : 'bg-gray-50'}`}>
+            <p className="text-[11px] text-gray-500 uppercase tracking-wide">Advance given</p>
+            <p
+              className={`text-xl sm:text-3xl font-bold mt-0.5 break-all ${
+                vendor.advance > 0 ? 'text-blue-700' : 'text-gray-700'
+              }`}
+            >
+              {fmtMoney(vendor.advance || 0)}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 mt-4 md:flex md:justify-end">
+          <button
+            type="button"
+            onClick={openPurchase}
+            className="flex items-center justify-center gap-1 px-3 md:px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+          >
+            <FiPlus size={16} />
+            Goods
           </button>
-          <button type="button" onClick={openPayment} className="py-2.5 bg-green-600 text-white rounded-lg text-sm font-medium">
-            + Payment
+          <button
+            type="button"
+            onClick={openPayment}
+            className="flex items-center justify-center gap-1 px-3 md:px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+          >
+            <FiPlus size={16} />
+            Payment
           </button>
-          <button type="button" onClick={openAdvance} className="py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium">
-            + Advance
-          </button>
-          <button type="button" onClick={openEdit} className="py-2.5 border rounded-lg text-sm font-medium">
-            Edit
+          <button
+            type="button"
+            onClick={openAdvance}
+            className="flex items-center justify-center gap-1 px-3 md:px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium shadow-sm active:scale-95 transition whitespace-nowrap"
+          >
+            <FiPlus size={16} />
+            Advance
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <div className="bg-white rounded-lg shadow p-4 sm:p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Due</p>
-          <p className={`text-xl sm:text-3xl font-bold mt-1 break-all ${vendor.balance > 0 ? 'text-amber-700' : 'text-green-700'}`}>
-            {fmtMoney(vendor.balance || 0)}
+      {pendingBills.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-2xl p-3.5 mb-5">
+          <div className="flex items-center gap-2 text-orange-800">
+            <FiClock size={16} />
+            <p className="font-semibold text-sm">
+              {pendingBills.length} bill{pendingBills.length > 1 ? 's' : ''} pending
+            </p>
+          </div>
+          <p className="text-xs text-orange-700/80 mt-0.5">
+            Receipt aa gayi hai, bill aane par amount bharein. Tab tak due mein nahi juda.
           </p>
+          <div className="mt-2.5 space-y-2">
+            {pendingBills.map((row) => (
+              <div
+                key={row._id}
+                className="flex items-center gap-3 bg-white rounded-xl border border-orange-100 px-3 py-2"
+              >
+                {row.parchiImage ? (
+                  <button type="button" onClick={() => setPreview(row.parchiImage!)} className="shrink-0">
+                    <img src={row.parchiImage} alt="Receipt" className="h-10 w-10 object-cover rounded-lg border" />
+                  </button>
+                ) : (
+                  <span className="shrink-0 h-10 w-10 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
+                    <FiFileText size={18} />
+                  </span>
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">
+                    {row.items?.length
+                      ? row.items.map((it) => `${it.name} × ${it.quantity}`).join(', ')
+                      : 'Receipt photo only'}
+                  </p>
+                  <p className="text-[11px] text-gray-500">Goods: {fmtDate(row.goodsDate || row.date)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openBill(row)}
+                  className="shrink-0 px-3 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-xs font-medium active:scale-95 transition"
+                >
+                  Add bill
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="bg-white rounded-lg shadow p-4 sm:p-5">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Advance</p>
-          <p className={`text-xl sm:text-3xl font-bold mt-1 break-all ${vendor.advance > 0 ? 'text-blue-700' : 'text-gray-700'}`}>
-            {fmtMoney(vendor.advance || 0)}
-          </p>
-        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-2 md:hidden">
+        <h2 className="font-semibold">Vendor Ledger</h2>
+        <p className="text-xs text-gray-400">{ledger.length} entries</p>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      {/* Mobile ledger cards */}
+      <div className="md:hidden space-y-2.5">
+        {ledger.length === 0 && (
+          <div className="bg-white rounded-xl border py-10 text-center text-gray-500 text-sm px-4">
+            No entries yet. Add goods, payment, or advance.
+          </div>
+        )}
+        {ledger.map((row) => {
+          const badge = typeBadge(row);
+          const { credit, debit } = creditDebit(row);
+          return (
+            <div key={row._id} className="bg-white rounded-xl border shadow-sm p-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${badge.cls}`}>
+                    {badge.text}
+                  </span>
+                  <p className="text-xs text-gray-500 mt-1">{fmtDate(row.date)}</p>
+                  {row.type === 'purchase' && row.goodsDate ? (
+                    <p className="text-[11px] text-gray-400">Goods: {fmtDate(row.goodsDate)}</p>
+                  ) : null}
+                </div>
+                <div className="text-right whitespace-nowrap">
+                  {isBillPending(row) ? (
+                    <p className="text-xs font-semibold text-orange-700">Amount pending</p>
+                  ) : null}
+                  {credit > 0 ? (
+                    <p className="text-base font-bold text-amber-700">+{fmtMoney(credit)}</p>
+                  ) : null}
+                  {debit > 0 ? (
+                    <p className={`font-bold text-green-700 ${credit > 0 ? 'text-xs' : 'text-base'}`}>
+                      {credit > 0 ? 'Paid ' : '−'}
+                      {fmtMoney(debit)}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {(row.items?.length > 0 || row.note || row.parchiImage || row.billImage) && (
+                <div className="flex items-start gap-3 mt-2.5">
+                  <div className="flex-1 min-w-0 text-sm text-gray-700">
+                    {row.items?.length > 0 && (
+                      <ul className="space-y-0.5">
+                        {row.items.map((it, i) => (
+                          <li key={i} className="break-words">
+                            {it.name} × {it.quantity}
+                            {isBillPending(row) ? '' : ` @ ₹${it.rate}`}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {row.note ? (
+                      <p className="text-gray-500 text-xs mt-1 break-words">{row.note}</p>
+                    ) : null}
+                  </div>
+                  {row.parchiImage || row.billImage ? (
+                    <div className="shrink-0 flex gap-1.5">
+                      {row.parchiImage ? (
+                        <button type="button" onClick={() => setPreview(row.parchiImage!)}>
+                          <img src={row.parchiImage} alt="Slip" className="h-12 w-12 object-cover rounded-lg border" />
+                        </button>
+                      ) : null}
+                      {row.billImage ? (
+                        <button type="button" onClick={() => setPreview(row.billImage!)}>
+                          <img src={row.billImage} alt="Bill" className="h-12 w-12 object-cover rounded-lg border" />
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mt-3 pt-2.5 border-t text-sm">
+                <p className="text-gray-500">
+                  Balance:{' '}
+                  <span className="font-semibold text-gray-800">{fmtMoney(row.balanceAfter || 0)}</span>
+                </p>
+                <div className="flex items-center gap-1">
+                  {isBillPending(row) ? (
+                    <button
+                      type="button"
+                      onClick={() => openBill(row)}
+                      className="inline-flex items-center gap-1 text-orange-700 bg-orange-50 text-xs font-medium px-2 py-1 rounded-lg hover:bg-orange-100"
+                    >
+                      <FiFileText size={13} />
+                      Add bill
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => delEntry(row._id)}
+                    className="inline-flex items-center gap-1 text-red-500 text-xs px-2 py-1 rounded-lg hover:bg-red-50"
+                  >
+                    <FiTrash2 size={13} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
         <div className="px-4 py-3 border-b flex items-center justify-between gap-2">
           <h2 className="font-semibold">Vendor Ledger</h2>
-          <p className="text-xs text-gray-400 md:hidden">Swipe → for columns</p>
+          <p className="text-xs text-gray-400">{ledger.length} entries</p>
         </div>
 
         <div className="overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -491,8 +795,9 @@ export default function VendorDetailPage() {
                       {row.items?.length > 0 ? (
                         <ul className="space-y-0.5">
                           {row.items.map((it, i) => (
-                            <li key={i} className="truncate" title={`${it.name} × ${it.quantity} @ ₹${it.rate}`}>
-                              {it.name} × {it.quantity} @ ₹{it.rate}
+                            <li key={i} className="truncate" title={`${it.name} × ${it.quantity}`}>
+                              {it.name} × {it.quantity}
+                              {isBillPending(row) ? '' : ` @ ₹${it.rate}`}
                             </li>
                           ))}
                         </ul>
@@ -517,7 +822,13 @@ export default function VendorDetailPage() {
                       </div>
                     </td>
                     <td className="py-3 px-3 text-right font-medium text-amber-700 whitespace-nowrap">
-                      {credit > 0 ? fmtMoney(credit) : '—'}
+                      {isBillPending(row) ? (
+                        <span className="text-xs text-orange-700">Pending</span>
+                      ) : credit > 0 ? (
+                        fmtMoney(credit)
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="py-3 px-3 text-right font-medium text-green-700 whitespace-nowrap">
                       {debit > 0 ? fmtMoney(debit) : '—'}
@@ -525,7 +836,16 @@ export default function VendorDetailPage() {
                     <td className="py-3 px-3 text-right font-semibold whitespace-nowrap">
                       {fmtMoney(row.balanceAfter || 0)}
                     </td>
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      {isBillPending(row) ? (
+                        <button
+                          type="button"
+                          onClick={() => openBill(row)}
+                          className="text-orange-700 text-xs font-medium hover:underline mr-3"
+                        >
+                          Add bill
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => delEntry(row._id)}
@@ -544,12 +864,16 @@ export default function VendorDetailPage() {
 
       {modal === 'purchase' && (
         <PhoneSheet
-          title="Add Goods"
+          title={billEntry ? 'Add bill' : receiptOnly ? 'Goods receipt (bill pending)' : 'Add Goods'}
           wide
           onClose={() => setModal(null)}
           footer={
             <div className="flex flex-col gap-2">
-              <p className="font-semibold text-base">Total: {fmtMoney(purchaseTotal)}</p>
+              {receiptOnly ? (
+                <p className="text-sm text-gray-500">Amount will be added when the bill arrives</p>
+              ) : (
+                <p className="font-semibold text-base">Total: {fmtMoney(purchaseTotal)}</p>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={() => setModal(null)} className="py-3 border rounded-xl text-base">
                   Cancel
@@ -557,16 +881,62 @@ export default function VendorDetailPage() {
                 <button
                   type="submit"
                   form="vendor-purchase-form"
-                  disabled={saving}
-                  className="py-3 bg-amber-600 text-white rounded-xl text-base disabled:opacity-50"
+                  disabled={saving || uploading !== null}
+                  className={`py-3 text-white rounded-xl text-base disabled:opacity-50 ${
+                    billEntry || receiptOnly ? 'bg-orange-600' : 'bg-amber-600'
+                  }`}
                 >
-                  {saving ? 'Saving...' : 'Save'}
+                  {saving ? 'Saving...' : billEntry ? 'Save bill' : 'Save'}
                 </button>
               </div>
             </div>
           }
         >
           <form id="vendor-purchase-form" onSubmit={submitPurchase} className="space-y-4">
+            {billEntry ? (
+              <div className="flex items-center gap-3 bg-orange-50 border border-orange-100 rounded-xl p-3">
+                {billEntry.parchiImage ? (
+                  <button type="button" onClick={() => setPreview(billEntry.parchiImage!)} className="shrink-0">
+                    <img
+                      src={billEntry.parchiImage}
+                      alt="Receipt"
+                      className="h-14 w-14 object-cover rounded-lg border"
+                    />
+                  </button>
+                ) : null}
+                <div className="min-w-0 text-sm">
+                  <p className="font-medium text-orange-800">Receipt from {fmtDate(billEntry.goodsDate || billEntry.date)}</p>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    Bill ke hisaab se har item ka rate bharein, ya neeche sirf total amount daalein.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-xl">
+                {[
+                  { v: false, label: 'Bill aa gaya' },
+                  { v: true, label: 'Sirf receipt aayi' },
+                ].map((opt) => (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    onClick={() => setReceiptOnly(opt.v)}
+                    className={`py-2.5 rounded-lg text-sm font-medium transition ${
+                      receiptOnly === opt.v ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {receiptOnly && !billEntry ? (
+              <p className="text-xs text-gray-500 -mt-2">
+                Maal ki entry + receipt photo save hogi. Amount baad mein &quot;Add bill&quot; se bharein — tab tak
+                due mein nahi judega.
+              </p>
+            ) : null}
+
             <div className="space-y-3">
               {lines.map((line, i) => (
                 <div key={i} className="grid grid-cols-2 gap-2 items-end border-b pb-3">
@@ -585,7 +955,7 @@ export default function VendorDetailPage() {
                       placeholder="Product name"
                     />
                   </div>
-                  <div>
+                  <div className={receiptOnly ? 'col-span-2' : ''}>
                     <label className="text-xs text-gray-500">Qty</label>
                     <input
                       type="number"
@@ -603,7 +973,7 @@ export default function VendorDetailPage() {
                       className="w-full px-3 py-3 border rounded-xl text-base"
                     />
                   </div>
-                  <div>
+                  <div className={receiptOnly ? 'hidden' : ''}>
                     <label className="text-xs text-gray-500">Rate</label>
                     <input
                       type="number"
@@ -643,6 +1013,8 @@ export default function VendorDetailPage() {
               + Add line
             </button>
 
+            {!receiptOnly && (
+            <>
             <div>
               <label className="text-xs text-gray-500">Or total amount only</label>
               <input
@@ -702,19 +1074,12 @@ export default function VendorDetailPage() {
                 </label>
               )}
             </div>
+            </>
+            )}
 
-            <div className="space-y-3">
+            {billEntry ? (
               <div>
-                <label className="block text-sm mb-1">Goods date</label>
-                <input
-                  type="datetime-local"
-                  value={goodsDate}
-                  onChange={(e) => setGoodsDate(e.target.value)}
-                  className="w-full px-3 py-3 border rounded-xl text-base"
-                />
-              </div>
-              <div>
-                <label className="block text-sm mb-1">Entry date</label>
+                <label className="block text-sm mb-1">Bill date</label>
                 <input
                   type="datetime-local"
                   value={entryDate}
@@ -722,7 +1087,28 @@ export default function VendorDetailPage() {
                   className="w-full px-3 py-3 border rounded-xl text-base"
                 />
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm mb-1">Goods date</label>
+                  <input
+                    type="datetime-local"
+                    value={goodsDate}
+                    onChange={(e) => setGoodsDate(e.target.value)}
+                    className="w-full px-3 py-3 border rounded-xl text-base"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm mb-1">Entry date</label>
+                  <input
+                    type="datetime-local"
+                    value={entryDate}
+                    onChange={(e) => setEntryDate(e.target.value)}
+                    className="w-full px-3 py-3 border rounded-xl text-base"
+                  />
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm mb-1">Note</label>
@@ -733,7 +1119,43 @@ export default function VendorDetailPage() {
               />
             </div>
 
-            {photoFields}
+            {billEntry ? (
+              <div>
+                <label className="block text-sm mb-1">Bill photo</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => onUpload('bill', e.target.files?.[0])}
+                  className="w-full text-sm"
+                />
+                {uploading === 'bill' && <p className="text-xs text-gray-500 mt-1">Uploading…</p>}
+                {billImage && (
+                  <button type="button" onClick={() => setPreview(billImage)} className="mt-1">
+                    <img src={billImage} alt="Bill" className="h-16 rounded border object-cover" />
+                  </button>
+                )}
+              </div>
+            ) : receiptOnly ? (
+              <div>
+                <label className="block text-sm mb-1">Receipt photo</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => onUpload('parchi', e.target.files?.[0])}
+                  className="w-full text-sm"
+                />
+                {uploading === 'parchi' && <p className="text-xs text-gray-500 mt-1">Uploading…</p>}
+                {parchiImage && (
+                  <button type="button" onClick={() => setPreview(parchiImage)} className="mt-1">
+                    <img src={parchiImage} alt="Receipt" className="h-16 rounded border object-cover" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              photoFields
+            )}
           </form>
         </PhoneSheet>
       )}
